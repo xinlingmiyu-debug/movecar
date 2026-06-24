@@ -91,7 +91,7 @@
 
 点击右上角的「Deploy」保存代码。
 
-具体代码地址：https://github.com/illria/movecar/blob/patch-1/movecar.js
+具体代码地址：[https://github.com/illria/movecar/blob/patch-1/movecar.js](https://raw.githubusercontent.com/xinlingmiyu-debug/movecar/refs/heads/main/%E4%BF%AE%E6%94%B9%E8%BF%87movecar.js)
 
 第三步：创建 KV 存储 (云端数据库)
 我们需要一个地方来临时存储挪车状态和位置信息。
