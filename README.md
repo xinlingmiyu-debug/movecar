@@ -130,6 +130,7 @@ Variable name（变量名） 必须准确填入：MOVE_CAR_STATUS。
 变量名: PUSHPLUS_TOKEN
 
 值: 填入你的 PUSHPLUS_TOKEN 的 token 即可
+TOKEN申请地址：https://www.pushplus.plus/
 
 3.telegram bot 通知
 
