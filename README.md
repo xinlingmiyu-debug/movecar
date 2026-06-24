@@ -68,38 +68,76 @@
 
 ## 部署教程
 
-### 第一步：注册 Cloudflare 账号
+1.Cloudfalre 部署
+第一步：注册 Cloudflare 账号
+打开 Cloudflare 官网：https://dash.cloudflare.com/sign-up
 
-1. 打开 https://dash.cloudflare.com/sign-up
-2. 输入邮箱和密码，完成注册
+输入你的邮箱和密码，完成注册并登录。
 
-### 第二步：创建 Worker
+第二步：创建 Worker (云端运行环境)
+登录后，点击左侧菜单栏的「Workers & Pages」。
 
-1. 登录后点击左侧菜单「Workers & Pages」
-2. 点击「Create」→「Create Worker」
-3. 名称填 `movecar`（或你喜欢的名字）
-4. 点击「Deploy」
-5. 点击「Edit code」，删除默认代码
-6. 复制 `movecar.js` 全部内容粘贴进去
-7. 点击右上角「Deploy」保存
+点击右侧的「Create」按钮，然后选择「Create Worker」。
 
-### 第三步：创建 KV 存储
+在 Name（名称）一栏填入 movecar（或者你喜欢的任何英文字母）。
 
-1. 左侧菜单点击「KV」
-2. 点击「Create a namespace」
-3. 名称填 `MOVE_CAR_STATUS`，点击「Add」
-4. 回到你的 Worker →「Settings」→「Bindings」
-5. 点击「Add」→「KV Namespace」
-6. Variable name 填 `MOVE_CAR_STATUS`
-7. 选择刚创建的 namespace，点击「Deploy」
+点击右下角的「Deploy」（部署）按钮。
 
-### 第四步：配置环境变量
+部署完成后，点击「Edit code」（编辑代码），你会看到一个代码编辑器。
 
-1. Worker →「Settings」→「Variables and Secrets」
-2. 添加以下变量：
-   - `BARK_URL`：你的 Bark 推送地址（如 `https://api.day.app/xxxxx`）
-   - `PHONE_NUMBER`：备用联系电话（可选）
+将里面的默认代码全部删除。
 
+复制全部代码（博客代码是在原有的 Bark、增加适合国内微信生态的 PushPlus，以及极其稳定且适合极客的 Telegram Bot。），粘贴到刚才清空的编辑器中。
+
+点击右上角的「Deploy」保存代码。
+
+具体代码地址：https://github.com/illria/movecar/blob/patch-1/movecar.js
+
+第三步：创建 KV 存储 (云端数据库)
+我们需要一个地方来临时存储挪车状态和位置信息。
+
+回到 Cloudflare 左侧菜单，点击「KV」。
+
+点击「Create a namespace」（创建命名空间）。
+
+名称必须填入：MOVE_CAR_STATUS，然后点击「Add」。
+
+重新回到左侧菜单的「Workers & Pages」，点击你刚才创建的 movecar 项目。
+
+进入顶部的「Settings」（设置）选项卡，在左侧找到「Bindings」（绑定）。
+
+点击「Add」-> 选择「KV Namespace」。
+
+Variable name（变量名） 必须准确填入：MOVE_CAR_STATUS。
+
+在下拉菜单中选择你刚刚创建的命名空间，点击「Deploy」保存。
+
+第四步：配置推送环境变量
+这一步决定了通知怎么发到你的手机上。
+
+依然在 Worker 的「Settings」中，找到「Variables and Secrets」（变量和机密）。
+
+点击「Add」添加以下变量（任选其中几个通知方式）：
+
+1.bark 通知
+
+变量名: BARK_URL
+
+值: 填入你的 Bark 推送地址（例如 https://api.day.app/你的专属Key）
+
+2. 微信 pushplus 通知
+
+变量名: PUSHPLUS_TOKEN
+
+值: 填入你的 PUSHPLUS_TOKEN 的 token 即可
+
+3.telegram bot 通知
+
+变量名: TG_BOT_TOKEN
+
+变量名:TG_CHAT_ID
+
+值: 填入你的 TOKEN和ID 的即可
 ### 第五步：绑定域名（可选）
 
 1. Worker →「Settings」→「Domains & Routes」
