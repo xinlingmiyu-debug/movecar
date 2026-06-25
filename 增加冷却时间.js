@@ -1,7 +1,3 @@
-// 声明 KV 命名空间（需要在 Cloudflare Dashboard 中绑定）
-// 变量名: MOVE_CAR_STATUS
-// KV 命名空间: 你创建的 KV 命名空间
-
 addEventListener('fetch', event => {
   event.respondWith(handleRequest(event.request))
 })
@@ -33,6 +29,11 @@ async function handleRequest(request) {
     }), {
       headers: { 'Content-Type': 'application/json' }
     });
+  }
+
+  // 新增：检查IP冷却状态
+  if (path === '/api/check-cooldown') {
+    return handleCheckCooldown(request);
   }
 
   if (path === '/owner-confirm') {
@@ -106,6 +107,46 @@ function generateMapUrls(lat, lng) {
   };
 }
 
+// 获取客户端IP
+function getClientIP(request) {
+  const ip = request.headers.get('CF-Connecting-IP') || 
+             request.headers.get('X-Forwarded-For')?.split(',')[0] || 
+             request.headers.get('X-Real-IP') || 
+             'unknown';
+  return ip;
+}
+
+// 检查IP冷却状态
+async function handleCheckCooldown(request) {
+  const ip = getClientIP(request);
+  const cooldownKey = `cooldown_${ip}`;
+  const cooldownData = await MOVE_CAR_STATUS.get(cooldownKey);
+  
+  if (cooldownData) {
+    const data = JSON.parse(cooldownData);
+    const now = Date.now();
+    const remaining = Math.ceil((data.endTime - now) / 1000);
+    if (remaining > 0) {
+      return new Response(JSON.stringify({ 
+        inCooldown: true, 
+        remaining: remaining 
+      }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    } else {
+      // 冷却已过期，删除记录
+      await MOVE_CAR_STATUS.delete(cooldownKey);
+    }
+  }
+  
+  return new Response(JSON.stringify({ 
+    inCooldown: false, 
+    remaining: 0 
+  }), {
+    headers: { 'Content-Type': 'application/json' }
+  });
+}
+
 async function handleNotify(request, url) {
   try {
     const body = await request.json();
@@ -114,6 +155,27 @@ async function handleNotify(request, url) {
     const delayed = body.delayed || false;
 
     const confirmUrl = encodeURIComponent(url.origin + '/owner-confirm');
+
+    // 检查IP冷却
+    const ip = getClientIP(request);
+    const cooldownKey = `cooldown_${ip}`;
+    const cooldownData = await MOVE_CAR_STATUS.get(cooldownKey);
+    
+    if (cooldownData) {
+      const data = JSON.parse(cooldownData);
+      const now = Date.now();
+      if (now < data.endTime) {
+        const remaining = Math.ceil((data.endTime - now) / 1000);
+        return new Response(JSON.stringify({ 
+          success: false, 
+          error: `冷却中，请等待 ${remaining} 秒`,
+          remaining: remaining
+        }), { 
+          status: 429,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    }
 
     let notifyBody = '🚗 挪车请求';
     if (message) notifyBody += `\n💬 留言: ${message}`;
@@ -140,7 +202,6 @@ async function handleNotify(request, url) {
     // 并发发送多种通知
     const pushTasks = [];
 
-    // 检查环境变量是否存在
     if (typeof BARK_URL !== 'undefined' && BARK_URL) {
       pushTasks.push(sendBark(notifyBody, confirmUrl));
     }
@@ -153,10 +214,15 @@ async function handleNotify(request, url) {
       pushTasks.push(sendPushPlus('🚨 挪车请求', notifyBody, decodeURIComponent(confirmUrl)));
     }
 
-    // 即使没有配置任何推送，也返回成功
     if (pushTasks.length > 0) {
       await Promise.allSettled(pushTasks);
     }
+
+    // 设置IP冷却（3分钟）
+    const cooldownDuration = 180; // 3分钟
+    await MOVE_CAR_STATUS.put(cooldownKey, JSON.stringify({
+      endTime: Date.now() + cooldownDuration * 1000
+    }), { expirationTtl: cooldownDuration + 10 });
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' }
@@ -194,7 +260,6 @@ async function handleOwnerConfirmAction(request) {
       headers: { 'Content-Type': 'application/json' }
     });
   } catch (error) {
-    // 即使出错也标记为已确认
     await MOVE_CAR_STATUS.put('notify_status', 'confirmed', { expirationTtl: 600 });
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' }
@@ -757,18 +822,24 @@ function renderMainPage(origin) {
       let cooldownSeconds = 0;
       const COOLDOWN_DURATION = 180;
 
-      window.onload = () => {
+      window.onload = async () => {
         showModal('locationTipModal');
-        const savedCooldown = localStorage.getItem('retryCooldown');
-        if (savedCooldown) {
-          const remaining = Math.ceil((parseInt(savedCooldown) - Date.now()) / 1000);
-          if (remaining > 0) {
-            startCooldown(remaining);
-          } else {
-            localStorage.removeItem('retryCooldown');
-          }
-        }
+        // 从服务器检查IP冷却状态
+        await checkServerCooldown();
       };
+
+      // 检查服务器端的IP冷却状态
+      async function checkServerCooldown() {
+        try {
+          const res = await fetch('/api/check-cooldown');
+          const data = await res.json();
+          if (data.inCooldown && data.remaining > 0) {
+            startCooldown(data.remaining);
+          }
+        } catch (e) {
+          console.error('检查冷却状态失败:', e);
+        }
+      }
 
       function showModal(id) {
         document.getElementById(id).classList.add('show');
@@ -827,7 +898,9 @@ function renderMainPage(origin) {
             body: JSON.stringify({ message: msg, location: userLocation, delayed: delayed })
           });
 
-          if (res.ok) {
+          const data = await res.json();
+
+          if (res.ok && data.success) {
             if (delayed) {
               showToast('⏳ 通知将延迟30秒发送');
             } else {
@@ -837,8 +910,16 @@ function renderMainPage(origin) {
             document.getElementById('successView').style.display = 'flex';
             startCooldown(COOLDOWN_DURATION);
             startPolling();
+          } else if (res.status === 429) {
+            // 冷却中
+            showToast('⏳ ' + data.error);
+            if (data.remaining) {
+              startCooldown(data.remaining);
+            }
+            btn.disabled = false;
+            btn.innerHTML = '<span>🔔</span><span>一键通知车主</span>';
           } else {
-            throw new Error('API Error');
+            throw new Error(data.error || 'API Error');
           }
         } catch (e) {
           showToast('❌ 发送失败，请重试');
@@ -902,9 +983,6 @@ function renderMainPage(origin) {
         cooldownSeconds = seconds;
         btn.disabled = true;
         
-        const endTime = Date.now() + seconds * 1000;
-        localStorage.setItem('retryCooldown', endTime.toString());
-        
         cooldownTimer = setInterval(() => {
           cooldownSeconds--;
           if (cooldownSeconds <= 0) {
@@ -912,7 +990,6 @@ function renderMainPage(origin) {
             cooldownTimer = null;
             btn.disabled = false;
             display.textContent = '';
-            localStorage.removeItem('retryCooldown');
           } else {
             const minutes = Math.floor(cooldownSeconds / 60);
             const secs = cooldownSeconds % 60;
@@ -944,12 +1021,21 @@ function renderMainPage(origin) {
             })
           });
 
-          if (res.ok) {
+          const data = await res.json();
+
+          if (res.ok && data.success) {
             showToast('✅ 再次通知已发送！');
             document.getElementById('waitingText').innerText = '已再次通知，等待车主回应...';
             startCooldown(COOLDOWN_DURATION);
+          } else if (res.status === 429) {
+            showToast('⏳ ' + data.error);
+            if (data.remaining) {
+              startCooldown(data.remaining);
+            }
+            btn.disabled = false;
+            btn.innerHTML = '<span>🔔</span><span>再次通知</span>';
           } else {
-            throw new Error('API Error');
+            throw new Error(data.error || 'API Error');
           }
         } catch (e) {
           showToast('❌ 发送失败，请重试');
