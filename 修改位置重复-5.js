@@ -93,7 +93,7 @@ async function reverseGeocode(lat, lng) {
   }
 }
 
-// WGS-84 转 GCJ-02 (中国国测局坐标系)
+// WGS-84 转 GCJ-02
 function wgs84ToGcj02(lat, lng) {
   const a = 6378245.0;
   const ee = 0.00669342162296594323;
@@ -131,7 +131,7 @@ function transformLng(x, y) {
   return ret;
 }
 
-// GCJ-02 转 BD-09 (百度坐标系)
+// GCJ-02 转 BD-09
 function gcj02ToBd09(lat, lng) {
   const x_PI = 3.14159265358979324 * 3000.0 / 180.0;
   const z = Math.sqrt(lng * lng + lat * lat) + 0.00002 * Math.sin(lat * x_PI);
@@ -142,7 +142,7 @@ function gcj02ToBd09(lat, lng) {
   };
 }
 
-// 生成所有地图链接 - 输入WGS-84坐标
+// 生成所有地图链接
 function generateMapUrls(lat, lng) {
   const gcj = wgs84ToGcj02(lat, lng);
   const bd = gcj02ToBd09(gcj.lat, gcj.lng);
@@ -281,7 +281,8 @@ async function handleNotify(request, url) {
       pushTasks.push(
         (async () => {
           try {
-            await sendTelegram(notifyBody, decodeURIComponent(confirmUrl), locationDescription);
+            // 只传递 notifyBody，不单独传递位置信息
+            await sendTelegram(notifyBody, decodeURIComponent(confirmUrl));
           } catch (e) {
             console.error('Telegram推送失败:', e);
           }
@@ -293,7 +294,8 @@ async function handleNotify(request, url) {
       pushTasks.push(
         (async () => {
           try {
-            await sendPushPlus('🚨 挪车请求', notifyBody, decodeURIComponent(confirmUrl), locationDescription);
+            // 只传递 notifyBody，不单独传递位置信息
+            await sendPushPlus('🚨 挪车请求', notifyBody, decodeURIComponent(confirmUrl));
           } catch (e) {
             console.error('PushPlus推送失败:', e);
           }
@@ -868,10 +870,10 @@ function renderMainPage(origin) {
       <div class="card input-card">
         <textarea id="msgInput" placeholder="输入留言给车主...（可选）"></textarea>
         <div class="tags">
-          <div class="tag" onclick="addTag('您的车挡住我了，麻烦挪一下。')">🚧 挡路</div>
-          <div class="tag" onclick="addTag('临时停靠一下，马上回来。')">⏱️ 临停</div>
-          <div class="tag" onclick="addTag('电话打不通，看到信息请回复。')">📞 没接</div>
-          <div class="tag" onclick="addTag('留下你的联系方式，车主看到会联系你。')">🙏 加急</div>
+          <div class="tag" onclick="addTag('您的车挡住我了')">🚧 挡路</div>
+          <div class="tag" onclick="addTag('临时停靠一下')">⏱️ 临停</div>
+          <div class="tag" onclick="addTag('电话打不通')">📞 没接</div>
+          <div class="tag" onclick="addTag('麻烦尽快')">🙏 加急</div>
         </div>
       </div>
 
@@ -920,8 +922,12 @@ function renderMainPage(origin) {
     </div>
 
     <script>
-      // ==================== 前端坐标转换 ====================
-      // WGS-84 转 GCJ-02 (前端JavaScript版本)
+      let userLocation = null;
+      let checkTimer = null;
+      let cooldownTimer = null;
+      let cooldownSeconds = 0;
+      const COOLDOWN_DURATION = 5;
+
       function wgs84ToGcj02(lat, lng) {
         const a = 6378245.0;
         const ee = 0.00669342162296594323;
@@ -958,14 +964,6 @@ function renderMainPage(origin) {
         ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
         return ret;
       }
-
-      // ==================== 页面逻辑 ====================
-      let userLocation = null;
-      let userLocationGcj = null; // 存储转换后的GCJ-02坐标
-      let checkTimer = null;
-      let cooldownTimer = null;
-      let cooldownSeconds = 0;
-      const COOLDOWN_DURATION = 5;
 
       window.onload = async () => {
         showModal('locationTipModal');
@@ -1004,14 +1002,11 @@ function renderMainPage(origin) {
         if ('geolocation' in navigator) {
           navigator.geolocation.getCurrentPosition(
             (pos) => {
-              // 存储原始WGS-84坐标
               userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-              // 转换为GCJ-02坐标（用于高德地图显示）
-              userLocationGcj = wgs84ToGcj02(pos.coords.latitude, pos.coords.longitude);
-              
+              const gcj = wgs84ToGcj02(pos.coords.latitude, pos.coords.longitude);
               icon.className = 'loc-icon success';
               txt.className = 'loc-status success';
-              txt.innerText = '已获取位置 ';
+              txt.innerText = '已获取位置 ✓';
             },
             (err) => {
               icon.className = 'loc-icon error';
@@ -1040,7 +1035,6 @@ function renderMainPage(origin) {
         btn.innerHTML = '<span>🚀</span><span>发送中...</span>';
 
         try {
-          // 发送时使用WGS-84坐标，后端会进行转换
           const res = await fetch('/api/notify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1524,16 +1518,12 @@ async function sendBark(notifyBody, confirmUrl) {
 }
 
 // --- Telegram Bot 推送 ---
-async function sendTelegram(text, confirmUrl, locationDescription) {
+async function sendTelegram(text, confirmUrl) {
   const tgUrl = `https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`;
   
+  // text 已经包含了位置信息，直接使用，不再重复添加
   let messageText = `🚨 <b>收到新的挪车请求</b>\n\n<pre>${text}</pre>`;
-  
-  if (locationDescription) {
-    messageText += `\n\n📍 <b>位置：</b>${locationDescription}`;
-  }
-  
-  messageText += `\n\n<a href="${confirmUrl}">👉 点击此处确认正在前往</a>`;
+  messageText += `\n\n<a href="${confirmUrl}">👉 点击此处确认您正在前往</a>`;
   
   await fetch(tgUrl, {
     method: 'POST',
@@ -1548,14 +1538,11 @@ async function sendTelegram(text, confirmUrl, locationDescription) {
 }
 
 // --- PushPlus 微信推送 ---
-async function sendPushPlus(title, content, confirmUrl, locationDescription) {
+async function sendPushPlus(title, content, confirmUrl) {
   const url = 'http://www.pushplus.plus/send';
+  
+  // content 已经包含了位置信息，直接使用，不再重复添加
   let htmlContent = `<div><pre>${content}</pre>`;
-  
-  if (locationDescription) {
-    htmlContent += `<br/><p>📍 <b>位置：</b>${locationDescription}</p>`;
-  }
-  
   htmlContent += `<br/><a href="${confirmUrl}" style="color:#0093E9;font-weight:bold;">👉 点击此处确认您正在前往</a></div>`;
   
   await fetch(url, {
